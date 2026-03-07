@@ -19,6 +19,7 @@ circuits/verification_key.json
 
 # General build
 build/
+.npm-cache
 
 # macOS
 .DS_Store
