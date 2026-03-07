@@ -10,6 +10,7 @@
     "deploy:local": "npx hardhat run scripts/deploy.js --network localhost",
     "deploy:testnet": "npx hardhat run scripts/deploy.js --network rskTestnet",
     "deploy:mainnet": "npx hardhat run scripts/deploy.js --network rskMainnet",
+    "verify:testnet": "node scripts/verify-testnet.js",
     "agent": "node agent/index.js",
     "generate-proof": "node scripts/generateProof.js"
   },
@@ -19,6 +20,7 @@
     "circomlibjs": "^0.1.7",
     "dotenv": "^16.0.3",
     "ethers": "^6.13.0",
+    "node-llama-cpp": "^2.8.16",
     "snarkjs": "^0.7.6",
     "zod": "^3.23.8"
   },

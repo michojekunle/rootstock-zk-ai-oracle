@@ -81,7 +81,7 @@ npm install -g circom2
 
 ---
 
-## Setup
+## Setup for Rootstock Testnet
 
 ### 1. Clone and install dependencies
 
@@ -91,19 +91,29 @@ cd rootstock-zk-ai-oracle
 npm install
 ```
 
-### 2. Configure environment
+### 2. Get Testnet RBTC
+
+Before deploying contracts, you'll need test Bitcoin (tRBTC) to pay for gas:
+
+```bash
+# Go to: https://faucet.rootstock.io
+# Request 0.1 - 1.0 tRBTC
+# Wait 1-2 minutes for funds to arrive
+```
+
+### 3. Configure for Testnet
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env`:
+Edit `.env` and set your testnet account:
 ```bash
-PRIVATE_KEY=0xYOUR_PRIVATE_KEY_HERE
+PRIVATE_KEY=0x...YOUR_FUNDED_ACCOUNT_PRIVATE_KEY...
 RSK_RPC_URL=https://public-node.testnet.rsk.co
 ```
 
-Get test RBTC (tRBTC): https://faucet.rootstock.io
+⚠️ **Never commit `.env` to git** — it contains your private key!
 
 ---
 
@@ -161,26 +171,25 @@ Oracle Contract
   ... (all tests pass)
 ```
 
-### Step 3: Deploy Contracts
+### Step 3: Deploy Contracts to Rootstock Testnet
 
-#### Local (no RBTC needed)
-
+First, ensure your `.env` is configured with testnet settings:
 ```bash
-# Terminal 1: start local node
-npx hardhat node
-
-# Terminal 2: deploy
-npm run deploy:local
+PRIVATE_KEY=0x...  # Your account's private key (from MetaMask/wallet)
+RSK_RPC_URL=https://public-node.testnet.rsk.co
 ```
 
-#### Rootstock Testnet
-
+Then deploy:
 ```bash
-# Ensure .env has PRIVATE_KEY with tRBTC balance
 npm run deploy:testnet
 ```
 
-Both commands write `deployments.json`:
+This will:
+1. Deploy `Verifier.sol` (with hardcoded Groth16 verification keys)
+2. Deploy `Oracle.sol` (links to Verifier)
+3. Write addresses to `deployments.json`
+
+Expected output:
 ```json
 {
   "network": "rskTestnet",
@@ -190,6 +199,11 @@ Both commands write `deployments.json`:
   "timestamp": "2024-01-15T10:30:00Z"
 }
 ```
+
+**Next Steps:**
+- View contract on explorer: `https://explorer.testnet.rootstock.io/address/{oracle_address}`
+- Update `dapp-frontend/config.js` with the Oracle address for your frontend
+- Continue to Step 4 to submit predictions
 
 ### Step 4: Run the Agent
 
@@ -276,6 +290,112 @@ contract.on("PredictionSubmitted", (id, yield_, above, threshold, submitter, ts)
 
 ---
 
+## Rootstock Testnet Deployment
+
+Deploy your oracle to Rootstock testnet for public testing.
+
+### 1. Get Testnet RBTC
+
+Get tRBTC (test Bitcoin) from the faucet:
+```bash
+# Go to https://faucet.rootstock.io
+# Request 0.1 - 1.0 tRBTC (enough for 100+ submissions)
+# Wait 1-2 minutes for funds to arrive in your wallet
+```
+
+### 2. Update `.env` for Testnet
+
+```bash
+# Edit .env:
+PRIVATE_KEY=0x...  # Your funded testnet account private key
+RSK_RPC_URL=https://public-node.testnet.rsk.co
+```
+
+**Important:** Ensure your account has tRBTC before deploying.
+
+### 3. Deploy Contracts
+
+```bash
+# Compile circuit (one-time)
+npm run compile:circuit
+
+# Compile contracts
+npm run compile:contracts
+
+# Deploy to testnet
+npm run deploy:testnet
+```
+
+Expected output:
+```
+Step 1/2: Deploying Verifier.sol
+Step 2/2: Deploying Oracle.sol
+
+Deployment Complete!
+
+Addresses:
+  Verifier: 0x...
+  Oracle:   0x...
+
+Saved to: deployments.json
+
+Explorer links:
+  Verifier: https://explorer.testnet.rootstock.io/address/0x...
+  Oracle:   https://explorer.testnet.rootstock.io/address/0x...
+```
+
+### 4. Verify Deployment
+
+```bash
+# Verify contracts are accessible on testnet
+npm run verify:testnet
+```
+
+This will:
+- Check both contracts are deployed
+- Read the latest prediction from Oracle
+- Listen for new PredictionSubmitted events (10 seconds)
+- Print explorer links
+
+### 5. Run Agent on Testnet
+
+```bash
+# Generate ZK proof and submit to testnet Oracle
+node agent/index.js
+```
+
+The agent will:
+1. Generate a BTC yield prediction (locally)
+2. Create a Groth16 ZK proof (locally)
+3. Submit the proof to the Oracle contract on testnet
+4. Print transaction hash and confirmation
+
+### 6. View on Explorer
+
+Visit the Oracle address on Rootstock testnet explorer:
+```
+https://explorer.testnet.rootstock.io/address/{ORACLE_ADDRESS}
+```
+
+You can:
+- View contract code and ABI
+- Call `latestPrediction()` and `recommendStrategy()` functions
+- See all `PredictionSubmitted` events in the "Logs" tab
+- Track transaction history
+
+### Build Frontend dApp (Optional)
+
+Once contracts are deployed on testnet, build a web interface:
+```bash
+cd dapp-frontend
+python3 -m http.server 8000
+# Open http://localhost:8000 in your browser
+```
+
+See `dapp-frontend/README.md` for setup instructions.
+
+---
+
 ## Strategy Tiers
 
 | Yield (bps) | Yield (%) | Strategy | Example Action on Rootstock |
@@ -289,39 +409,75 @@ contract.on("PredictionSubmitted", (id, yield_, above, threshold, submitter, ts)
 
 ## Real Llama Integration
 
-Replace the mock predictor in `agent/index.js` with real LLM inference:
+The oracle is pre-configured to support real Llama AI inference. The system automatically uses a real Llama model if available, otherwise falls back to the mock predictor.
+
+### Setup Real Llama (Optional)
+
+#### 1. Install the C++ bindings
 
 ```bash
-# Install node-llama-cpp
 npm install node-llama-cpp
+```
 
-# Download a quantized model
+#### 2. Download a quantized Llama model
+
+Choose a model size based on your hardware:
+
+```bash
+# Small (3B parameters, ~2 GB, 2-3s inference on CPU)
 npx node-llama-cpp pull --dir ./models llama3.2:3b
+
+# Medium (8B parameters, ~5 GB, 5-10s inference on CPU)
+npx node-llama-cpp pull --dir ./models llama3.2:8b
 ```
 
-Then in `agent/index.js`, replace `mockLlamaPredict()` with:
+#### 3. Set model path in `.env`
 
-```javascript
-import { getLlama, LlamaChatSession } from "node-llama-cpp";
-
-async function llamaPredict(btcHistory) {
-  const llama = await getLlama();
-  const model = await llama.loadModel({
-    modelPath: process.env.LLAMA_MODEL_PATH
-  });
-  const context = await model.createContext();
-  const session = new LlamaChatSession({
-    contextSequence: context.getSequence()
-  });
-
-  const prompt = `Given BTC market data: ${JSON.stringify(btcHistory)}
-Predict the expected DeFi lending yield in basis points (0-10000, where 100 = 1%).
-Return ONLY a single integer. No explanation.`;
-
-  const response = await session.prompt(prompt);
-  return Math.max(0, Math.min(10000, parseInt(response.trim())));
-}
+```bash
+# Edit .env:
+LLAMA_MODEL_PATH=./models/llama-3.2-3b-instruct.Q4_K_M.gguf
 ```
+
+#### 4. Run with real Llama
+
+```bash
+# The agent will automatically load the model on startup
+node agent/index.js
+```
+
+**Expected output:**
+```
+[Llama] Loading model from: ./models/llama-3.2-3b-instruct.Q4_K_M.gguf
+[Llama] Model loaded successfully
+[Step 1/3] AI Yield Prediction (Llama)
+[Llama] Generating prediction...
+[Llama] Prediction: 750 bps (7.50%)
+```
+
+### How It Works
+
+The `llama-predictor.js` module:
+- Loads the GGUF model file on startup (if `LLAMA_MODEL_PATH` is set)
+- Sends BTC market data to Llama via a structured prompt
+- Parses the model's integer response (basis points)
+- Falls back to mock predictor if model loading fails
+
+The system **automatically tries Llama first, then falls back to mock** — no code changes needed.
+
+### Performance Notes
+
+- **3B model:** ~2-3 seconds per prediction on CPU
+- **8B model:** ~5-10 seconds per prediction on CPU
+- **GPU inference:** Use `CUDA_VISIBLE_DEVICES` or hardware-specific bindings (see node-llama-cpp docs)
+- Models are cached in memory after first load
+
+### Model Quality
+
+- `3B`: Fast, suitable for testnet / demo
+- `8B`: More accurate, production recommended
+- `13B+`: Highest quality but slower
+
+See [node-llama-cpp docs](https://github.com/withcatai/node-llama-cpp) for advanced usage.
 
 ---
 
@@ -404,13 +560,62 @@ rootstock-zk-ai-oracle/
 
 ---
 
+## Optional: Local Hardhat Development
+
+This system is configured for **Rootstock testnet by default**. However, you can also test locally on a Hardhat node (no testnet RBTC required).
+
+### Local Setup
+
+1. Update `.env`:
+```bash
+# Comment out testnet settings
+# PRIVATE_KEY=0x...
+# RSK_RPC_URL=https://public-node.testnet.rsk.co
+
+# Uncomment local hardhat settings (pre-funded test account)
+PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb476c6b8d6c1f02b86a1649a238f
+RSK_RPC_URL=http://127.0.0.1:8545
+```
+
+2. Start local Hardhat node:
+```bash
+npx hardhat node
+```
+
+3. In another terminal, deploy locally:
+```bash
+npm run deploy:local
+```
+
+4. Run the agent:
+```bash
+node agent/index.js
+```
+
+The agent will automatically detect the local network and use the pre-funded test account (10,000 test RBTC).
+
+### Local vs. Testnet
+
+| Aspect | Local (Hardhat) | Testnet |
+|--------|-----------------|---------|
+| Setup | Instant (`npx hardhat node`) | Need tRBTC from faucet |
+| Speed | Instant blocks | ~30s blocks |
+| Cost | Free (no gas cost) | ~$0.01 per submission |
+| Explorer | None (local only) | https://explorer.testnet.rootstock.io |
+| Persistence | Cleared on restart | Permanent |
+| Use case | Development & testing | Production & public validation |
+
+For production use, **always deploy to Rootstock testnet or mainnet**.
+
+---
+
 ## Troubleshooting
 
 **`Circuit WASM not found`**
 Run `npm run compile:circuit` first.
 
 **`deployments.json not found`**
-Run `npm run deploy:local` (with `npx hardhat node` running) or `npm run deploy:testnet`.
+Run `npm run deploy:testnet` (primary). Or for local development: `npm run deploy:local` (requires `npx hardhat node` running in another terminal).
 
 **`Gas estimation failed — InvalidProof`**
 Using the stub `Verifier.sol` which always returns false. Run `npm run compile:circuit` to generate the real verifier, then `npm run compile:contracts` and redeploy.

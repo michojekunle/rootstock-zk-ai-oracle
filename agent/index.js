@@ -27,6 +27,7 @@ import { readFileSync, existsSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { generateProof } from "../scripts/generateProof.js";
+import { initLlama, llamaPredict, isLlamaReady } from "../llama-predictor.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -68,17 +69,105 @@ try {
 // Download model: npx node-llama-cpp pull --dir ./models llama3.2:3b
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// Synthetic BTC market history (7 data points = last 7 periods)
-// In production: fetch from CoinGecko, Binance, or RSK DeFi protocols
-const MOCK_BTC_HISTORY = [
-  { price: 42000, volume: 18000, volatility: 0.025, dominance: 52.1 },
-  { price: 44500, volume: 21000, volatility: 0.018, dominance: 52.8 },
-  { price: 43200, volume: 16000, volatility: 0.031, dominance: 51.9 },
-  { price: 46000, volume: 25000, volatility: 0.012, dominance: 53.2 },
-  { price: 45500, volume: 22000, volatility: 0.015, dominance: 53.0 },
-  { price: 47200, volume: 28000, volatility: 0.009, dominance: 54.1 },
-  { price: 48900, volume: 31000, volatility: 0.008, dominance: 55.0 },
-];
+// ═══════════════════════════════════════════════════════════════════════════════
+// Fetch REAL BTC market history from CoinGecko API
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Fetch real BTC market data from CoinGecko (free, no API key required)
+ * Returns 7 data points (last 7 days)
+ *
+ * @returns {Promise<Object[]>} Array of {price, volume, dominance}
+ */
+async function fetchRealBtcHistory() {
+  try {
+    // CoinGecko API: 7 days of historical data
+    const response = await fetch(
+      "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?" +
+      "vs_currency=usd&days=7&interval=daily"
+    );
+
+    if (!response.ok) {
+      throw new Error(`CoinGecko API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const prices = data.prices || [];
+    const volumes = data.total_volumes || [];
+
+    // Get BTC dominance from separate endpoint
+    let dominanceArray = [];
+    try {
+      const domResponse = await fetch(
+        "https://api.coingecko.com/api/v3/global?include_market_cap_percentage=true"
+      );
+      if (domResponse.ok) {
+        const domData = await domResponse.json();
+        const btcDom = domData.data?.market_cap_percentage?.btc || 50;
+        // Create dominance array matching price points
+        dominanceArray = new Array(prices.length).fill(btcDom);
+      }
+    } catch (e) {
+      console.warn("[Market Data] Could not fetch dominance, using default 50%");
+      dominanceArray = new Array(prices.length).fill(50);
+    }
+
+    // Convert to format: { price, volume, volatility, dominance }
+    const btcHistory = prices.slice(-7).map((p, i) => {
+      const price = p[1];
+      const volume = volumes[i]?.[1] || 20000;
+      return {
+        price: Math.round(price),
+        volume: Math.round(volume / 1e6), // Convert to millions USD
+        volatility: calculateVolatility(prices.slice(Math.max(0, i - 2), i + 1)),
+        dominance: dominanceArray[i] || 50,
+      };
+    });
+
+    console.log(`[Market Data] Fetched ${btcHistory.length} days of real BTC data from CoinGecko`);
+    console.log(`[Market Data] Latest BTC price: $${btcHistory[btcHistory.length - 1].price}`);
+    return btcHistory;
+  } catch (err) {
+    console.warn(`[Market Data] Failed to fetch from CoinGecko: ${err.message}`);
+    console.warn("[Market Data] Using fallback mock data");
+    return getFallbackBtcHistory();
+  }
+}
+
+/**
+ * Calculate price volatility from a small window
+ * @param {number[][]} prices - Array of [timestamp, price]
+ * @returns {number} Volatility as decimal (0.01 = 1%)
+ */
+function calculateVolatility(prices) {
+  if (prices.length < 2) return 0.015; // default low volatility
+
+  const values = prices.map(p => p[1]);
+  const mean = values.reduce((a, b) => a + b, 0) / values.length;
+  const variance = values.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / values.length;
+  const stdDev = Math.sqrt(variance);
+  const volatility = stdDev / mean;
+
+  return Math.min(volatility, 0.05); // cap at 5%
+}
+
+/**
+ * Fallback mock BTC history (used if API fails)
+ */
+function getFallbackBtcHistory() {
+  return [
+    { price: 42000, volume: 18000, volatility: 0.025, dominance: 52.1 },
+    { price: 44500, volume: 21000, volatility: 0.018, dominance: 52.8 },
+    { price: 43200, volume: 16000, volatility: 0.031, dominance: 51.9 },
+    { price: 46000, volume: 25000, volatility: 0.012, dominance: 53.2 },
+    { price: 45500, volume: 22000, volatility: 0.015, dominance: 53.0 },
+    { price: 47200, volume: 28000, volatility: 0.009, dominance: 54.1 },
+    { price: 48900, volume: 31000, volatility: 0.008, dominance: 55.0 },
+  ];
+}
+
+// Will be populated on first run
+let REAL_BTC_HISTORY = null;
 
 /**
  * Mock Llama yield predictor.
@@ -93,6 +182,25 @@ const MOCK_BTC_HISTORY = [
  * @param {Object[]} btcHistory - Array of BTC market data points
  * @returns {number} Predicted yield in basis points (0-10000)
  */
+/**
+ * Predict BTC yield using either real Llama AI (if loaded) or fallback to mock.
+ *
+ * Try Llama first, fall back to mock if not available.
+ */
+async function predictBtcYield(btcHistory) {
+  // Try real Llama first
+  if (isLlamaReady()) {
+    try {
+      return await llamaPredict(btcHistory);
+    } catch (err) {
+      console.warn("  [Llama] Real prediction failed, falling back to mock:", err.message);
+    }
+  }
+
+  // Fallback: mock predictor
+  return mockLlamaPredict(btcHistory);
+}
+
 function mockLlamaPredict(btcHistory) {
   const latest = btcHistory[btcHistory.length - 1];
   const prev   = btcHistory[btcHistory.length - 2];
@@ -124,11 +232,11 @@ function mockLlamaPredict(btcHistory) {
   // Clamp to valid circuit range [0, 10000]
   const prediction = Math.max(0, Math.min(10000, Math.round(rawScore)));
 
-  console.log("  [Llama] BTC price momentum: " + (priceMomentum * 100).toFixed(2) + "%");
-  console.log("  [Llama] Volume factor:       " + volumeFactor.toFixed(2) + "x");
-  console.log("  [Llama] Volatility penalty:  " + volatilityPenalty.toFixed(1) + " bps");
-  console.log("  [Llama] Dominance bonus:     " + dominanceBonus.toFixed(1) + " bps");
-  console.log(`  [Llama] Predicted yield:     ${prediction} bps (${(prediction / 100).toFixed(2)}%)`);
+  console.log("  [Llama-Mock] BTC price momentum: " + (priceMomentum * 100).toFixed(2) + "%");
+  console.log("  [Llama-Mock] Volume factor:       " + volumeFactor.toFixed(2) + "x");
+  console.log("  [Llama-Mock] Volatility penalty:  " + volatilityPenalty.toFixed(1) + " bps");
+  console.log("  [Llama-Mock] Dominance bonus:     " + dominanceBonus.toFixed(1) + " bps");
+  console.log(`  [Llama-Mock] Predicted yield:     ${prediction} bps (${(prediction / 100).toFixed(2)}%)`);
 
   return prediction;
 }
@@ -300,9 +408,15 @@ server.tool(
   },
   async ({ threshold }) => {
     console.log("\n[Tool: predict_btc_yield]");
-    console.log("  Running mock Llama prediction on BTC history...");
+    console.log("  Fetching real BTC market data...");
 
-    const prediction = mockLlamaPredict(MOCK_BTC_HISTORY);
+    // Fetch real BTC data on first use
+    if (!REAL_BTC_HISTORY) {
+      REAL_BTC_HISTORY = await fetchRealBtcHistory();
+    }
+
+    console.log("  Predicting BTC yield...");
+    const prediction = await predictBtcYield(REAL_BTC_HISTORY);
 
     return {
       content: [{
@@ -436,10 +550,15 @@ async function runFullPipeline(threshold = 500) {
   console.log("╚══════════════════════════════════════════════════╝");
 
   try {
-    // ── Step 1: Mock Llama Prediction ────────────────────────────────────────
-    console.log("\n[Step 1/3] AI Yield Prediction (Mock Llama)");
+    // Fetch real BTC market data on first run
+    if (!REAL_BTC_HISTORY) {
+      REAL_BTC_HISTORY = await fetchRealBtcHistory();
+    }
+
+    // ── Step 1: AI Yield Prediction ──────────────────────────────────────────
+    console.log("\n[Step 1/3] AI Yield Prediction (Llama)");
     console.log("─".repeat(50));
-    const rawPrediction = mockLlamaPredict(MOCK_BTC_HISTORY);
+    const rawPrediction = await predictBtcYield(REAL_BTC_HISTORY);
     const salt = Math.floor(Math.random() * 1e14);
     console.log(`  Raw prediction:  ${rawPrediction} bps (PRIVATE — never revealed on-chain)`);
     console.log(`  Salt:            ${salt} (random nonce for privacy binding)`);
@@ -518,6 +637,14 @@ async function runFullPipeline(threshold = 500) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 5: Entry Point (MCP server or CLI)
 // ═══════════════════════════════════════════════════════════════════════════════
+
+// Initialize Llama model if LLAMA_MODEL_PATH is set
+const llamaModelPath = process.env.LLAMA_MODEL_PATH;
+if (llamaModelPath) {
+  await initLlama(llamaModelPath);
+} else {
+  console.log("[Llama] LLAMA_MODEL_PATH not set. Using mock predictor.");
+}
 
 const isMCPMode = process.argv.includes("--mcp");
 

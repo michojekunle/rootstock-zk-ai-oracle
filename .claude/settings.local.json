@@ -40,7 +40,10 @@
       "Bash(npm test -- test/oracle-submission.js)",
       "Bash(node -e \":*)",
       "Bash(git add -A)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(grep -l \"submitProof\\\\|verifProof\\\\|prediction\" /Users/mac/prog/open-source/rootstock-zk-ai-oracle/contracts/*.sol)",
+      "Bash(git add README.md dapp-frontend/README.md dapp-frontend/config.js)",
+      "Bash(timeout 30 node agent/index.js)"
     ]
   }
 }
