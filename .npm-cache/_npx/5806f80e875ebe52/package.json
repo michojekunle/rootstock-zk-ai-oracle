@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "circom2": "^0.2.22"
+  }
+}

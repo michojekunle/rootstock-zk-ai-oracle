@@ -1,0 +1,44 @@
+{
+  "name": "rootstock-zk-ai-oracle",
+  "version": "1.0.0",
+  "description": "ZK-private AI yield oracle on Rootstock — Circom + snarkjs + Llama + MCP",
+  "type": "module",
+  "scripts": {
+    "compile:circuit": "bash scripts/setup.sh",
+    "compile:contracts": "npx hardhat compile",
+    "test": "npx hardhat test",
+    "deploy:local": "npx hardhat run scripts/deploy.js --network localhost",
+    "deploy:testnet": "npx hardhat run scripts/deploy.js --network rskTestnet",
+    "deploy:mainnet": "npx hardhat run scripts/deploy.js --network rskMainnet",
+    "agent": "node agent/index.js",
+    "generate-proof": "node scripts/generateProof.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "circomlib": "^2.0.5",
+    "circomlibjs": "^0.1.7",
+    "dotenv": "^16.0.3",
+    "ethers": "^6.13.0",
+    "snarkjs": "^0.7.6",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "hardhat": "^2.22.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "rootstock",
+    "zk-snark",
+    "circom",
+    "oracle",
+    "defi",
+    "bitcoin",
+    "ai",
+    "llama",
+    "mcp"
+  ],
+  "license": "MIT"
+}
