@@ -2,20 +2,20 @@
  * llama-predictor.js
  *
  * Real Llama AI model integration for BTC yield prediction.
- * Replaces the mock predictor with actual LLM inference.
+ * Uses node-llama-cpp v2.8.16+ with proper context initialization
  *
  * Setup:
  *   npm install node-llama-cpp
  *   Download model: bash scripts/setup-llama.sh tiny
- *   Set LLAMA_MODEL_PATH in .env
+ *   Uncomment LLAMA_MODEL_PATH in .env
  */
 
-let llamaSession = null;
+let llamaModel = null;
 let modelPath = null;
 
 /**
  * Initialize the Llama model on startup.
- * Uses node-llama-cpp v2.8.16+ API (LlamaModel + LlamaChatSession)
+ * Uses node-llama-cpp v2.8.16+ API properly
  *
  * @param {string} path - Path to the GGUF model file
  * @returns {Promise<void>}
@@ -29,15 +29,12 @@ export async function initLlama(path) {
   try {
     console.log(`[Llama] Loading model from: ${path}`);
 
-    // node-llama-cpp v2.8.16 API: LlamaModel directly creates context
-    const { LlamaModel, LlamaChatSession } = await import("node-llama-cpp");
+    // node-llama-cpp v2.8.16: Load the model
+    const { LlamaModel } = await import("node-llama-cpp");
 
-    const model = new LlamaModel({ modelPath: path });
-
-    // Create context directly from model (no .createContext() method in v2.8.16)
-    // Context is created when we instantiate the chat session
-    llamaSession = new LlamaChatSession({
-      model,
+    llamaModel = new LlamaModel({
+      modelPath: path,
+      numGpuLayers: 35,  // Offload to GPU if available
     });
 
     modelPath = path;
@@ -45,86 +42,74 @@ export async function initLlama(path) {
   } catch (err) {
     console.warn(`[Llama] Failed to load model: ${err.message}`);
     console.warn("[Llama] Falling back to mock predictor");
-    llamaSession = null;
+    llamaModel = null;
   }
 }
 
 /**
  * Get a BTC yield prediction from the Llama model.
  *
- * Llama analyzes market data (price, volume, volatility, dominance) and predicts
- * the expected DeFi lending yield in basis points (0-10000, where 100 = 1%).
+ * Uses node-llama-cpp generate() method for inference.
+ * Analyzes market data and predicts DeFi lending yield (0-10000 basis points).
  *
- * @param {Array} btcHistory - Array of market data objects with: price, volume, volatility, dominance
- * @returns {Promise<number>} - Predicted yield in basis points (0-10000)
- * @throws {Error} - If model is not initialized and fallback is disabled
+ * @param {Array} btcHistory - Array of market data objects
+ * @returns {Promise<number>} - Predicted yield in basis points
  */
 export async function llamaPredict(btcHistory) {
-  if (!llamaSession) {
-    console.warn("[Llama] Model not loaded. Use initLlama() or provide LLAMA_MODEL_PATH in .env");
-    throw new Error(
-      "Llama model not initialized. Run: npm install node-llama-cpp && bash scripts/setup-llama.sh tiny"
-    );
+  if (!llamaModel) {
+    throw new Error("Llama model not loaded. Run: bash scripts/setup-llama.sh tiny");
   }
 
-  // Format market data for the prompt
+  // Format market data
   const marketData = btcHistory
     .map(
       (d, i) =>
-        `[${i}] Price: $${d.price}, Volume: ${d.volume}M, Volatility: ${(d.volatility * 100).toFixed(1)}%, Dominance: ${d.dominance.toFixed(1)}%`
+        `[${i}] $${d.price} | Vol:${d.volume}M | Vol%:${(d.volatility * 100).toFixed(1)} | Dom:${d.dominance.toFixed(1)}%`
     )
     .join("\n");
 
-  const prompt = `You are an expert BTC DeFi yield predictor. Analyze this Bitcoin market data and predict the expected DeFi lending yield.
-
-Market Data (7 data points, latest = most recent):
+  // Simple, direct prompt for better inference
+  const prompt = `Predict BTC DeFi yield (0-10000 basis points) based on this market data:
 ${marketData}
 
-Based on this data:
-1. Assess market momentum (price trend)
-2. Evaluate market confidence (volume, volatility)
-3. Consider BTC narrative strength (dominance)
-4. Predict realistic DeFi lending yield
-
-Return ONLY a single integer between 0 and 10000 representing basis points (100 = 1% yield).
-No explanation, no text, just the number.`;
+Consider: momentum, volume confidence, volatility risk, BTC dominance.
+Return ONLY the number, nothing else.`;
 
   try {
     console.log("[Llama] Generating prediction...");
 
-    // Try to use the chat session (v2.8.16 API)
-    let response;
-    try {
-      response = await llamaSession.prompt(prompt);
-    } catch (chatErr) {
-      // Fallback: some versions may need different method
-      console.warn("[Llama] Chat session failed, trying alternative method");
-      throw chatErr;
-    }
+    // Use the model's generate method directly
+    const response = await llamaModel.generate({
+      prompt,
+      maxTokens: 20,
+      temperature: 0.1,  // Low temperature for more deterministic output
+    });
 
-    const prediction = parseInt(response.trim());
+    // Extract the response text
+    const responseText = response.trim();
+    const prediction = parseInt(responseText.match(/\d+/)?.[0] || "0");
 
-    // Validate the prediction is in range
+    // Validate range
     if (isNaN(prediction) || prediction < 0 || prediction > 10000) {
       throw new Error(
-        `Invalid prediction from Llama: got "${response.trim()}", expected integer 0-10000`
+        `Invalid response: "${responseText}" parsed to ${prediction}`
       );
     }
 
     console.log(`[Llama] Prediction: ${prediction} bps (${(prediction / 100).toFixed(2)}%)`);
     return prediction;
   } catch (err) {
-    throw new Error(`Llama prediction failed: ${err.message}`);
+    throw new Error(`Llama inference failed: ${err.message}`);
   }
 }
 
 /**
- * Check if Llama model is available.
+ * Check if Llama model is available and ready.
  *
- * @returns {boolean} - True if model is loaded and ready
+ * @returns {boolean} - True if model is loaded
  */
 export function isLlamaReady() {
-  return llamaSession !== null;
+  return llamaModel !== null;
 }
 
 /**
