@@ -276,6 +276,112 @@ contract.on("PredictionSubmitted", (id, yield_, above, threshold, submitter, ts)
 
 ---
 
+## Rootstock Testnet Deployment
+
+Deploy your oracle to Rootstock testnet for public testing.
+
+### 1. Get Testnet RBTC
+
+Get tRBTC (test Bitcoin) from the faucet:
+```bash
+# Go to https://faucet.rootstock.io
+# Request 0.1 - 1.0 tRBTC (enough for 100+ submissions)
+# Wait 1-2 minutes for funds to arrive in your wallet
+```
+
+### 2. Update `.env` for Testnet
+
+```bash
+# Edit .env:
+PRIVATE_KEY=0x...  # Your funded testnet account private key
+RSK_RPC_URL=https://public-node.testnet.rsk.co
+```
+
+**Important:** Ensure your account has tRBTC before deploying.
+
+### 3. Deploy Contracts
+
+```bash
+# Compile circuit (one-time)
+npm run compile:circuit
+
+# Compile contracts
+npm run compile:contracts
+
+# Deploy to testnet
+npm run deploy:testnet
+```
+
+Expected output:
+```
+Step 1/2: Deploying Verifier.sol
+Step 2/2: Deploying Oracle.sol
+
+Deployment Complete!
+
+Addresses:
+  Verifier: 0x...
+  Oracle:   0x...
+
+Saved to: deployments.json
+
+Explorer links:
+  Verifier: https://explorer.testnet.rootstock.io/address/0x...
+  Oracle:   https://explorer.testnet.rootstock.io/address/0x...
+```
+
+### 4. Verify Deployment
+
+```bash
+# Verify contracts are accessible on testnet
+npm run verify:testnet
+```
+
+This will:
+- Check both contracts are deployed
+- Read the latest prediction from Oracle
+- Listen for new PredictionSubmitted events (10 seconds)
+- Print explorer links
+
+### 5. Run Agent on Testnet
+
+```bash
+# Generate ZK proof and submit to testnet Oracle
+node agent/index.js
+```
+
+The agent will:
+1. Generate a BTC yield prediction (locally)
+2. Create a Groth16 ZK proof (locally)
+3. Submit the proof to the Oracle contract on testnet
+4. Print transaction hash and confirmation
+
+### 6. View on Explorer
+
+Visit the Oracle address on Rootstock testnet explorer:
+```
+https://explorer.testnet.rootstock.io/address/{ORACLE_ADDRESS}
+```
+
+You can:
+- View contract code and ABI
+- Call `latestPrediction()` and `recommendStrategy()` functions
+- See all `PredictionSubmitted` events in the "Logs" tab
+- Track transaction history
+
+### Build Frontend dApp (Optional)
+
+Once contracts are deployed on testnet, build a web interface:
+```bash
+cd dapp-frontend
+python3 -m http.server 8000
+# Open http://localhost:8000 in your browser
+```
+
+See `dapp-frontend/README.md` for setup instructions.
+
+---
+
 ## Strategy Tiers
 
 | Yield (bps) | Yield (%) | Strategy | Example Action on Rootstock |
@@ -289,39 +395,75 @@ contract.on("PredictionSubmitted", (id, yield_, above, threshold, submitter, ts)
 
 ## Real Llama Integration
 
-Replace the mock predictor in `agent/index.js` with real LLM inference:
+The oracle is pre-configured to support real Llama AI inference. The system automatically uses a real Llama model if available, otherwise falls back to the mock predictor.
+
+### Setup Real Llama (Optional)
+
+#### 1. Install the C++ bindings
 
 ```bash
-# Install node-llama-cpp
 npm install node-llama-cpp
+```
 
-# Download a quantized model
+#### 2. Download a quantized Llama model
+
+Choose a model size based on your hardware:
+
+```bash
+# Small (3B parameters, ~2 GB, 2-3s inference on CPU)
 npx node-llama-cpp pull --dir ./models llama3.2:3b
+
+# Medium (8B parameters, ~5 GB, 5-10s inference on CPU)
+npx node-llama-cpp pull --dir ./models llama3.2:8b
 ```
 
-Then in `agent/index.js`, replace `mockLlamaPredict()` with:
+#### 3. Set model path in `.env`
 
-```javascript
-import { getLlama, LlamaChatSession } from "node-llama-cpp";
-
-async function llamaPredict(btcHistory) {
-  const llama = await getLlama();
-  const model = await llama.loadModel({
-    modelPath: process.env.LLAMA_MODEL_PATH
-  });
-  const context = await model.createContext();
-  const session = new LlamaChatSession({
-    contextSequence: context.getSequence()
-  });
-
-  const prompt = `Given BTC market data: ${JSON.stringify(btcHistory)}
-Predict the expected DeFi lending yield in basis points (0-10000, where 100 = 1%).
-Return ONLY a single integer. No explanation.`;
-
-  const response = await session.prompt(prompt);
-  return Math.max(0, Math.min(10000, parseInt(response.trim())));
-}
+```bash
+# Edit .env:
+LLAMA_MODEL_PATH=./models/llama-3.2-3b-instruct.Q4_K_M.gguf
 ```
+
+#### 4. Run with real Llama
+
+```bash
+# The agent will automatically load the model on startup
+node agent/index.js
+```
+
+**Expected output:**
+```
+[Llama] Loading model from: ./models/llama-3.2-3b-instruct.Q4_K_M.gguf
+[Llama] Model loaded successfully
+[Step 1/3] AI Yield Prediction (Llama)
+[Llama] Generating prediction...
+[Llama] Prediction: 750 bps (7.50%)
+```
+
+### How It Works
+
+The `llama-predictor.js` module:
+- Loads the GGUF model file on startup (if `LLAMA_MODEL_PATH` is set)
+- Sends BTC market data to Llama via a structured prompt
+- Parses the model's integer response (basis points)
+- Falls back to mock predictor if model loading fails
+
+The system **automatically tries Llama first, then falls back to mock** — no code changes needed.
+
+### Performance Notes
+
+- **3B model:** ~2-3 seconds per prediction on CPU
+- **8B model:** ~5-10 seconds per prediction on CPU
+- **GPU inference:** Use `CUDA_VISIBLE_DEVICES` or hardware-specific bindings (see node-llama-cpp docs)
+- Models are cached in memory after first load
+
+### Model Quality
+
+- `3B`: Fast, suitable for testnet / demo
+- `8B`: More accurate, production recommended
+- `13B+`: Highest quality but slower
+
+See [node-llama-cpp docs](https://github.com/withcatai/node-llama-cpp) for advanced usage.
 
 ---
 

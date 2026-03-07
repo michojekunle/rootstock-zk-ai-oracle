@@ -27,6 +27,7 @@ import { readFileSync, existsSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { generateProof } from "../scripts/generateProof.js";
+import { initLlama, llamaPredict, isLlamaReady } from "../llama-predictor.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -93,6 +94,25 @@ const MOCK_BTC_HISTORY = [
  * @param {Object[]} btcHistory - Array of BTC market data points
  * @returns {number} Predicted yield in basis points (0-10000)
  */
+/**
+ * Predict BTC yield using either real Llama AI (if loaded) or fallback to mock.
+ *
+ * Try Llama first, fall back to mock if not available.
+ */
+async function predictBtcYield(btcHistory) {
+  // Try real Llama first
+  if (isLlamaReady()) {
+    try {
+      return await llamaPredict(btcHistory);
+    } catch (err) {
+      console.warn("  [Llama] Real prediction failed, falling back to mock:", err.message);
+    }
+  }
+
+  // Fallback: mock predictor
+  return mockLlamaPredict(btcHistory);
+}
+
 function mockLlamaPredict(btcHistory) {
   const latest = btcHistory[btcHistory.length - 1];
   const prev   = btcHistory[btcHistory.length - 2];
@@ -124,11 +144,11 @@ function mockLlamaPredict(btcHistory) {
   // Clamp to valid circuit range [0, 10000]
   const prediction = Math.max(0, Math.min(10000, Math.round(rawScore)));
 
-  console.log("  [Llama] BTC price momentum: " + (priceMomentum * 100).toFixed(2) + "%");
-  console.log("  [Llama] Volume factor:       " + volumeFactor.toFixed(2) + "x");
-  console.log("  [Llama] Volatility penalty:  " + volatilityPenalty.toFixed(1) + " bps");
-  console.log("  [Llama] Dominance bonus:     " + dominanceBonus.toFixed(1) + " bps");
-  console.log(`  [Llama] Predicted yield:     ${prediction} bps (${(prediction / 100).toFixed(2)}%)`);
+  console.log("  [Llama-Mock] BTC price momentum: " + (priceMomentum * 100).toFixed(2) + "%");
+  console.log("  [Llama-Mock] Volume factor:       " + volumeFactor.toFixed(2) + "x");
+  console.log("  [Llama-Mock] Volatility penalty:  " + volatilityPenalty.toFixed(1) + " bps");
+  console.log("  [Llama-Mock] Dominance bonus:     " + dominanceBonus.toFixed(1) + " bps");
+  console.log(`  [Llama-Mock] Predicted yield:     ${prediction} bps (${(prediction / 100).toFixed(2)}%)`);
 
   return prediction;
 }
@@ -300,9 +320,9 @@ server.tool(
   },
   async ({ threshold }) => {
     console.log("\n[Tool: predict_btc_yield]");
-    console.log("  Running mock Llama prediction on BTC history...");
+    console.log("  Predicting BTC yield...");
 
-    const prediction = mockLlamaPredict(MOCK_BTC_HISTORY);
+    const prediction = await predictBtcYield(MOCK_BTC_HISTORY);
 
     return {
       content: [{
@@ -436,10 +456,10 @@ async function runFullPipeline(threshold = 500) {
   console.log("╚══════════════════════════════════════════════════╝");
 
   try {
-    // ── Step 1: Mock Llama Prediction ────────────────────────────────────────
-    console.log("\n[Step 1/3] AI Yield Prediction (Mock Llama)");
+    // ── Step 1: AI Yield Prediction ──────────────────────────────────────────
+    console.log("\n[Step 1/3] AI Yield Prediction (Llama)");
     console.log("─".repeat(50));
-    const rawPrediction = mockLlamaPredict(MOCK_BTC_HISTORY);
+    const rawPrediction = await predictBtcYield(MOCK_BTC_HISTORY);
     const salt = Math.floor(Math.random() * 1e14);
     console.log(`  Raw prediction:  ${rawPrediction} bps (PRIVATE — never revealed on-chain)`);
     console.log(`  Salt:            ${salt} (random nonce for privacy binding)`);
@@ -518,6 +538,14 @@ async function runFullPipeline(threshold = 500) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 5: Entry Point (MCP server or CLI)
 // ═══════════════════════════════════════════════════════════════════════════════
+
+// Initialize Llama model if LLAMA_MODEL_PATH is set
+const llamaModelPath = process.env.LLAMA_MODEL_PATH;
+if (llamaModelPath) {
+  await initLlama(llamaModelPath);
+} else {
+  console.log("[Llama] LLAMA_MODEL_PATH not set. Using mock predictor.");
+}
 
 const isMCPMode = process.argv.includes("--mcp");
 

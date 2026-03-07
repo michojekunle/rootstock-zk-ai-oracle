@@ -40,7 +40,8 @@
       "Bash(npm test -- test/oracle-submission.js)",
       "Bash(node -e \":*)",
       "Bash(git add -A)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(grep -l \"submitProof\\\\|verifProof\\\\|prediction\" /Users/mac/prog/open-source/rootstock-zk-ai-oracle/contracts/*.sol)"
     ]
   }
 }

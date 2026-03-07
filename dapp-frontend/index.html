@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ZK-Private AI Oracle — Rootstock</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Ethers.js v6 from CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers.js/6.16.0/ethers.umd.min.js"></script>
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <h1>🔒 ZK-Private AI Oracle</h1>
+      <p class="subtitle">Private BTC yield predictions, cryptographically verified on Rootstock</p>
+    </header>
+
+    <!-- Wallet Connection Section -->
+    <section class="card">
+      <h2>Connect Wallet</h2>
+      <div class="button-group">
+        <button id="connectBtn" class="btn btn-primary">
+          🔗 Connect MetaMask / Rabby
+        </button>
+      </div>
+      <div id="networkInfo" class="network-info hidden">
+        <p>✓ Connected to: <span id="chainName"></span> (Chain ID: <span id="chainId"></span>)</p>
+        <p>Wallet: <span id="walletAddress"></span></p>
+      </div>
+    </section>
+
+    <!-- Main Oracle Section (hidden until wallet connects) -->
+    <div id="oracleSection" class="hidden">
+      <!-- Current Prediction -->
+      <section class="card">
+        <h2>📊 Current Prediction</h2>
+        <div class="prediction-grid">
+          <div class="metric-card">
+            <div class="metric-label">Predicted Yield</div>
+            <div class="metric-value" id="yieldValue">--</div>
+            <div class="metric-unit">basis points</div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-label">Percentage</div>
+            <div class="metric-value" id="percentValue">--</div>
+            <div class="metric-unit">% APY</div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-label">Above Threshold</div>
+            <div class="metric-value" id="aboveValue">--</div>
+            <div class="metric-unit"></div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-label">Strategy</div>
+            <div class="strategy-badge" id="strategyBadge">--</div>
+            <div class="metric-unit"></div>
+          </div>
+        </div>
+
+        <div class="prediction-details">
+          <p><strong>Submitted:</strong> <span id="timestampValue">--</span></p>
+          <p><strong>Submitter:</strong> <span id="submitterValue">--</span></p>
+        </div>
+      </section>
+
+      <!-- Strategy Explanation -->
+      <section class="card">
+        <h2>💡 Strategy Recommendation</h2>
+        <div id="strategyCard" class="strategy-card">
+          <div id="strategyExplanation">--</div>
+        </div>
+      </section>
+
+      <!-- Recent Predictions -->
+      <section class="card">
+        <h2>📜 Recent Predictions</h2>
+        <div id="predictionHistory" class="prediction-history">
+          <p class="placeholder">Listening for new predictions...</p>
+        </div>
+      </section>
+    </div>
+
+    <!-- Error Display -->
+    <div id="errorContainer" class="error-container hidden">
+      <div class="error-box">
+        <strong>⚠️ Error:</strong>
+        <p id="errorMessage"></p>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <p>🚀 ZK Oracle on Rootstock | Groth16 Proofs | Bitcoin Security</p>
+      <p style="font-size: 0.9em; opacity: 0.7;">
+        <a href="https://explorer.testnet.rootstock.io" target="_blank">Rootstock Explorer</a> |
+        <a href="https://faucet.rootstock.io" target="_blank">Get tRBTC</a>
+      </p>
+    </footer>
+  </div>
+
+  <!-- Main app -->
+  <script type="module" src="app.js"></script>
+</body>
+</html>
