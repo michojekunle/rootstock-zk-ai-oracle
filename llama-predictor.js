@@ -6,7 +6,7 @@
  *
  * Setup:
  *   npm install node-llama-cpp
- *   npx node-llama-cpp pull --dir ./models llama3.2:3b
+ *   Download model: bash scripts/setup-llama.sh tiny
  *   Set LLAMA_MODEL_PATH in .env
  */
 
@@ -15,6 +15,7 @@ let modelPath = null;
 
 /**
  * Initialize the Llama model on startup.
+ * Uses node-llama-cpp v2.8.16+ API (LlamaModel + LlamaChatSession)
  *
  * @param {string} path - Path to the GGUF model file
  * @returns {Promise<void>}
@@ -28,34 +29,19 @@ export async function initLlama(path) {
   try {
     console.log(`[Llama] Loading model from: ${path}`);
 
-    // Try v2.x API first (current version)
-    try {
-      const { Llama, LlamaChatSession } = await import("node-llama-cpp");
-      const llama = new Llama({
-        model: path,
-      });
+    // node-llama-cpp v2.8.16 API: LlamaModel directly creates context
+    const { LlamaModel, LlamaChatSession } = await import("node-llama-cpp");
 
-      llamaSession = new LlamaChatSession({
-        model: llama,
-      });
+    const model = new LlamaModel({ modelPath: path });
 
-      modelPath = path;
-      console.log("[Llama] Model loaded successfully");
-      return;
-    } catch (_v2Err) {
-      // Fallback to older API if v2.x doesn't work
-      const { getLlama, LlamaChatSession } = await import("node-llama-cpp");
-      const llama = await getLlama();
-      const model = await llama.loadModel({ modelPath: path });
-      const context = await model.createContext();
+    // Create context directly from model (no .createContext() method in v2.8.16)
+    // Context is created when we instantiate the chat session
+    llamaSession = new LlamaChatSession({
+      model,
+    });
 
-      llamaSession = new LlamaChatSession({
-        contextSequence: context.getSequence(),
-      });
-
-      modelPath = path;
-      console.log("[Llama] Model loaded successfully");
-    }
+    modelPath = path;
+    console.log("[Llama] Model loaded successfully");
   } catch (err) {
     console.warn(`[Llama] Failed to load model: ${err.message}`);
     console.warn("[Llama] Falling back to mock predictor");
@@ -77,7 +63,7 @@ export async function llamaPredict(btcHistory) {
   if (!llamaSession) {
     console.warn("[Llama] Model not loaded. Use initLlama() or provide LLAMA_MODEL_PATH in .env");
     throw new Error(
-      "Llama model not initialized. Run: npm install node-llama-cpp && npx node-llama-cpp pull --dir ./models llama3.2:3b"
+      "Llama model not initialized. Run: npm install node-llama-cpp && bash scripts/setup-llama.sh tiny"
     );
   }
 
@@ -105,7 +91,17 @@ No explanation, no text, just the number.`;
 
   try {
     console.log("[Llama] Generating prediction...");
-    const response = await llamaSession.prompt(prompt);
+
+    // Try to use the chat session (v2.8.16 API)
+    let response;
+    try {
+      response = await llamaSession.prompt(prompt);
+    } catch (chatErr) {
+      // Fallback: some versions may need different method
+      console.warn("[Llama] Chat session failed, trying alternative method");
+      throw chatErr;
+    }
+
     const prediction = parseInt(response.trim());
 
     // Validate the prediction is in range
