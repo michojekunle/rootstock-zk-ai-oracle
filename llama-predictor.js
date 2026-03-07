@@ -27,18 +27,35 @@ export async function initLlama(path) {
 
   try {
     console.log(`[Llama] Loading model from: ${path}`);
-    const { getLlama, LlamaChatSession } = await import("node-llama-cpp");
 
-    const llama = await getLlama();
-    const model = await llama.loadModel({ modelPath: path });
-    const context = await model.createContext();
+    // Try v2.x API first (current version)
+    try {
+      const { Llama, LlamaChatSession } = await import("node-llama-cpp");
+      const llama = new Llama({
+        model: path,
+      });
 
-    llamaSession = new LlamaChatSession({
-      contextSequence: context.getSequence(),
-    });
+      llamaSession = new LlamaChatSession({
+        model: llama,
+      });
 
-    modelPath = path;
-    console.log("[Llama] Model loaded successfully");
+      modelPath = path;
+      console.log("[Llama] Model loaded successfully");
+      return;
+    } catch (_v2Err) {
+      // Fallback to older API if v2.x doesn't work
+      const { getLlama, LlamaChatSession } = await import("node-llama-cpp");
+      const llama = await getLlama();
+      const model = await llama.loadModel({ modelPath: path });
+      const context = await model.createContext();
+
+      llamaSession = new LlamaChatSession({
+        contextSequence: context.getSequence(),
+      });
+
+      modelPath = path;
+      console.log("[Llama] Model loaded successfully");
+    }
   } catch (err) {
     console.warn(`[Llama] Failed to load model: ${err.message}`);
     console.warn("[Llama] Falling back to mock predictor");

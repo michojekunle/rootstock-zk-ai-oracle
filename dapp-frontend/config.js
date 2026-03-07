@@ -11,7 +11,7 @@
 export default {
   // PRIMARY: Rootstock Testnet & Mainnet addresses
   ORACLE_ADDRESS: {
-    31: "0x...",  // Rootstock testnet — set after npm run deploy:testnet
+    31: "0xC851d03647Ab52E7Df9a03caB6d1a26326734FF3",  // Rootstock testnet — set after npm run deploy:testnet
     30: "0x...",  // Rootstock mainnet — set after npm run deploy:mainnet
     // Optional: Local hardhat development (chainId 31337) — set after npm run deploy:local
     // 31337: "0x...",
@@ -19,7 +19,7 @@ export default {
 
   // RPC endpoints
   RPC_URLS: {
-    31: "https://public-node.testnet.rsk.co",
+    31: "https://rootstock-testnet.g.alchemy.com/v2/_-qd2d2OzWRZXyAcfPooz4GXAx1lJVdN",
     30: "https://public-node.rsk.co",
     // 31337: "http://127.0.0.1:8545",
   },
