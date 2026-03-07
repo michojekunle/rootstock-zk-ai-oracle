@@ -28,7 +28,19 @@
       "Bash(node --input-type=module --eval \":*)",
       "Bash(node --check /Users/mac/prog/open-source/rootstock-zk-ai-oracle/hardhat.config.cjs)",
       "Bash(bash -n /Users/mac/prog/open-source/rootstock-zk-ai-oracle/scripts/setup.sh)",
-      "Bash(bash -c ':*)"
+      "Bash(bash -c ':*)",
+      "Bash(npm run compile:circuit)",
+      "Bash(npm run compile:contracts)",
+      "Bash(DEBUG_PROOF=1 node scripts/generateProof.js --prediction 750 --salt 123 --threshold 500)",
+      "Bash(npm run deploy:local)",
+      "Bash(timeout 60 node agent/index.js)",
+      "Bash(npx snarkjs r1cs info circuits/prediction.r1cs)",
+      "Bash(npm test)",
+      "Bash(npm test -- test/verifier-direct.js)",
+      "Bash(npm test -- test/oracle-submission.js)",
+      "Bash(node -e \":*)",
+      "Bash(git add -A)",
+      "Bash(git commit:*)"
     ]
   }
 }

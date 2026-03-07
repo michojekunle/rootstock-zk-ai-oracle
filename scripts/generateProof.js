@@ -16,7 +16,7 @@
 //   npm run compile:circuit  (compiles circuit, generates .wasm and .zkey files)
 // ─────────────────────────────────────────────────────────────────────────────
 
-import snarkjs from "snarkjs";
+import * as snarkjs from "snarkjs";
 import { readFileSync, existsSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -147,9 +147,20 @@ export async function generateProof({ rawPrediction, salt, threshold }) {
 
   // ── Format for Solidity ────────────────────────────────────────────────────
   // exportSolidityCallData formats the proof as Solidity function arguments.
-  // Output format: "[pA_x, pA_y],[[pB_x1,pB_x2],[pB_y1,pB_y2]],[pC_x, pC_y],[s0,s1,s2]"
+  // Output format: "[pA_x, pA_y],[[pB_x1,pB_x2],[pB_y1,pB_y2]],[pC_x, pC_y],[s0,s1,s2,...]"
   const callDataRaw = await snarkjs.groth16.exportSolidityCallData(proof, publicSignals);
   const solidityCalldata = parseCallData(callDataRaw);
+
+  // DEBUG: Show what will be sent to contract
+  if (process.env.DEBUG_PROOF) {
+    debugProofData(
+      solidityCalldata.pA,
+      solidityCalldata.pB,
+      solidityCalldata.pC,
+      solidityCalldata.pubSignals,
+      publicSignals
+    );
+  }
 
   return {
     proof,
@@ -166,6 +177,7 @@ export async function generateProof({ rawPrediction, salt, threshold }) {
  *   [pA_x, pA_y], [[pB_x1,pB_x2],[pB_y1,pB_y2]], [pC_x, pC_y], [s0, s1, s2]
  *
  * We parse this into typed arrays compatible with ethers.js contract calls.
+ * All numeric values are converted to strings that ethers.js v6 can parse.
  *
  * @param {string} callDataRaw Raw string from snarkjs
  * @returns {{ pA: string[], pB: string[][], pC: string[], pubSignals: string[] }}
@@ -181,20 +193,48 @@ function parseCallData(callDataRaw) {
     throw new Error(`Failed to parse snarkjs calldata: ${err.message}\nRaw: ${callDataRaw}`);
   }
 
-  // parsed[0] = pA  — [x, y] as hex strings
-  // parsed[1] = pB  — [[x1,y1],[x2,y2]] as hex strings
-  // parsed[2] = pC  — [x, y] as hex strings
-  // parsed[3] = pubSignals — [s0, s1, s2] as decimal strings
+  // parsed[0] = pA  — [x, y] as hex or decimal strings
+  // parsed[1] = pB  — [[x1,y1],[x2,y2]] as hex or decimal strings
+  // parsed[2] = pC  — [x, y] as hex or decimal strings
+  // parsed[3] = pubSignals — [s0, s1, s2, ...] as decimal strings
   if (!parsed[0] || !parsed[1] || !parsed[2] || !parsed[3]) {
     throw new Error("Unexpected calldata structure from snarkjs");
   }
 
-  return {
-    pA: parsed[0],
-    pB: parsed[1],
-    pC: parsed[2],
-    pubSignals: parsed[3],
+  // Ensure values are strings for ethers.js contract encoding
+  const ensureString = (val) => {
+    if (typeof val === "string") return val;
+    if (typeof val === "number") return val.toString();
+    if (typeof val === "bigint") return val.toString();
+    return String(val);
   };
+
+  return {
+    pA: parsed[0].map(ensureString),
+    pB: parsed[1].map((row) => row.map(ensureString)),
+    pC: parsed[2].map(ensureString),
+    pubSignals: parsed[3].map(ensureString),
+  };
+}
+
+/**
+ * Debug helper to show what will be sent to the contract.
+ */
+function debugProofData(pA, pB, pC, pubSignals, publicSignals) {
+  console.log("\n[DEBUG] Proof data that will be sent to contract:");
+  console.log("  pA (G1 point) =", pA);
+  console.log("  pB (G2 point) =", pB);
+  console.log("  pC (G1 point) =", pC);
+  console.log("  pubSignals (array passed to verifyProof) =", pubSignals);
+  console.log("\n[DEBUG] Original publicSignals from proof:");
+  publicSignals.forEach((sig, i) => {
+    console.log(`    [${i}] = ${sig}`);
+  });
+  console.log(`\n[DEBUG] Note: Oracle.sol expects uint[3] pubSignals.`);
+  console.log(`       Current length: ${pubSignals.length}`);
+  if (pubSignals.length !== 3) {
+    console.log(`       WARNING: Expected 3 signals, got ${pubSignals.length}!`);
+  }
 }
 
 // ── CLI Mode ──────────────────────────────────────────────────────────────────
@@ -227,16 +267,21 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   generateProof({ rawPrediction, salt, threshold })
     .then(({ publicSignals, solidityCalldata }) => {
       console.log("\n=== Generated Proof ===");
-      console.log("Public signals:");
-      console.log(`  predicted_yield:    ${publicSignals[0]} bps (${(parseInt(publicSignals[0]) / 100).toFixed(2)}%)`);
-      console.log(`  is_above_threshold: ${publicSignals[1]}`);
-      console.log(`  threshold:          ${publicSignals[2]} bps`);
-      console.log("\nSolidity calldata:");
+      console.log("Input (private/public):");
+      console.log(`  raw_prediction: ${rawPrediction} (hidden)`);
+      console.log(`  salt:           ${salt} (hidden)`);
+      console.log(`  threshold:      ${threshold} bps (public)`);
+      console.log("\nPublic signals (snarkjs output):");
+      console.log(`  [0] predicted_yield:    ${publicSignals[0]} bps (${(parseInt(publicSignals[0]) / 100).toFixed(2)}%)`);
+      console.log(`  [1] is_above_threshold: ${publicSignals[1]} (${publicSignals[1] === "1" ? "YES ≥" : "NO <"} ${threshold})`);
+      console.log(`  [2] threshold:          ${publicSignals[2]} bps`);
+      console.log("\nSolidity calldata (for contract call):");
       console.log("  pA:", JSON.stringify(solidityCalldata.pA));
       console.log("  pB:", JSON.stringify(solidityCalldata.pB));
       console.log("  pC:", JSON.stringify(solidityCalldata.pC));
       console.log("  pubSignals:", JSON.stringify(solidityCalldata.pubSignals));
-      console.log("\nProof is valid and ready to submit to Oracle.sol");
+      console.log("\n✓ Off-chain verification: PASSED");
+      console.log("✓ Proof is valid and ready to submit to Oracle.sol");
     })
     .catch((err) => {
       console.error("\nProof generation failed:", err.message);

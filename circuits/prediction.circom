@@ -103,5 +103,5 @@ template PredictionProof() {
 // Instantiate the template as the main component.
 // {public [threshold]} declares threshold as a public input.
 // raw_prediction and salt are private inputs by default (not listed in public).
-// Outputs (predicted_yield, is_above_threshold) are always public.
+// Outputs (predicted_yield, is_above_threshold) are automatically public in snarkjs.
 component main {public [threshold]} = PredictionProof();

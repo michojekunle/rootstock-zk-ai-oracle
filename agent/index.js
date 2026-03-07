@@ -175,15 +175,27 @@ async function submitToOracle(solidityCalldata) {
   const rpcUrl = process.env.RSK_RPC_URL || "http://127.0.0.1:8545";
   const privateKey = process.env.PRIVATE_KEY;
 
-  if (!privateKey) {
+  const provider = new ethers.JsonRpcProvider(rpcUrl);
+  let signer;
+
+  // For local hardhat testing, auto-use the first account (has 10000 test RBTC)
+  if (rpcUrl.includes("127.0.0.1") || rpcUrl.includes("localhost")) {
+    console.log("  [Chain] Detected local hardhat node - using first test account");
+    const accounts = await provider.listAccounts();
+    if (!accounts.length) {
+      throw new Error("No accounts found on hardhat node. Is `npx hardhat node` running?");
+    }
+    signer = accounts[0];
+  } else if (privateKey) {
+    // For testnet/mainnet, use provided private key
+    signer = new ethers.Wallet(privateKey, provider);
+  } else {
     throw new Error(
-      "PRIVATE_KEY not set in .env\n" +
-      "Copy .env.example to .env and add your private key."
+      "PRIVATE_KEY not set in .env and not on local hardhat\n" +
+      "For testnet: add PRIVATE_KEY to .env"
     );
   }
 
-  const provider = new ethers.JsonRpcProvider(rpcUrl);
-  const signer   = new ethers.Wallet(privateKey, provider);
   const oracle   = new ethers.Contract(deployment.oracle, abi, signer);
 
   const { pA, pB, pC, pubSignals } = solidityCalldata;
@@ -191,6 +203,9 @@ async function submitToOracle(solidityCalldata) {
   console.log(`  [Chain] Oracle address: ${deployment.oracle}`);
   console.log(`  [Chain] Network RPC:    ${rpcUrl}`);
   console.log(`  [Chain] Submitter:      ${signer.address}`);
+
+  // DEBUG: Show public signals being submitted
+  console.log(`  [Chain] Public signals (${pubSignals.length}): ${JSON.stringify(pubSignals)}`);
 
   // ── Gas estimation ─────────────────────────────────────────────────────────
   // Groth16 verifyProof uses ~350k-450k gas via ecpairing precompile (0x08).
@@ -212,11 +227,23 @@ async function submitToOracle(solidityCalldata) {
   const gasLimit = (gasEstimate * 120n) / 100n;
 
   // ── Submit transaction ─────────────────────────────────────────────────────
-  const tx = await oracle.submitPrediction(pA, pB, pC, pubSignals, {
-    gasLimit,
-    // Rootstock minimum: 0.06 gwei = 60,000,000 wei
-    gasPrice: 60000000n,
-  });
+  // Detect if we're on hardhat (chainId 31337) and use appropriate fee structure
+  const chainId = (await provider.getNetwork()).chainId;
+  const isLocalHardhat = chainId === 31337n || rpcUrl.includes("127.0.0.1") || rpcUrl.includes("localhost");
+
+  let txOptions = { gasLimit };
+
+  if (isLocalHardhat) {
+    // For hardhat's EIP-1559: use dynamic fees based on current block
+    const feeData = await provider.getFeeData();
+    txOptions.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || 1000000000n; // 1 gwei fallback
+    txOptions.maxFeePerGas = (feeData.maxFeePerGas || 2000000000n);
+  } else {
+    // For Rootstock testnet: use fixed gas price (0.06 gwei minimum)
+    txOptions.gasPrice = 60000000n;
+  }
+
+  const tx = await oracle.submitPrediction(pA, pB, pC, pubSignals, txOptions);
 
   console.log(`  [Chain] Transaction:    ${tx.hash}`);
   console.log("  [Chain] Waiting for confirmation (~30s on Rootstock)...");

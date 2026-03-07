@@ -24,6 +24,7 @@
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "circom2": "^0.2.22",
     "hardhat": "^2.22.0"
   },
   "engines": {
