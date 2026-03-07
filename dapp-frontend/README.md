@@ -1,6 +1,8 @@
 # ZK-Private AI Oracle — Frontend dApp
 
-A minimal web interface for querying the ZK-Private AI Oracle smart contract on Rootstock.
+A minimal web interface for querying the ZK-Private AI Oracle smart contract on **Rootstock Testnet**.
+
+> ✅ **Testnet-First Setup** — This dApp is configured for Rootstock testnet (chainId 31) as the primary deployment target. Local hardhat development is optional.
 
 ## Features
 
@@ -13,41 +15,35 @@ A minimal web interface for querying the ZK-Private AI Oracle smart contract on 
 
 ## Setup
 
-### 1. Deploy Smart Contracts
+### 1. Deploy Smart Contracts (Rootstock Testnet)
 
-First, deploy the Oracle contracts to a network (local hardhat or Rootstock testnet):
+Deploy the Oracle contracts to Rootstock testnet:
 
 ```bash
 # From the project root
 npm run compile:circuit
 npm run compile:contracts
-
-# Deploy to local hardhat node
-npx hardhat node &
-npm run deploy:local
-
-# OR deploy to Rootstock testnet
 npm run deploy:testnet
 ```
 
-### 2. Update Contract Address
+**Important:** Make sure your `.env` file has a funded Rootstock testnet account (get tRBTC from https://faucet.rootstock.io).
 
-After deployment, copy the Oracle address to `config.js`:
+### 2. Update Contract Address for Testnet
+
+After deployment, copy the Oracle address from `deployments.json` to `dapp-frontend/config.js`:
 
 ```bash
 # Find the Oracle address in deployments.json
 cat deployments.json
 # Copy the "oracle" value
-
-# Update dapp-frontend/config.js
 ```
 
-Edit `dapp-frontend/config.js` and paste the Oracle address:
+Edit `dapp-frontend/config.js` and paste:
 
 ```javascript
 ORACLE_ADDRESS: {
-  31337: "0x...",  // Your local deployment
-  31: "0x...",     // Your testnet deployment
+  31: "0xPASTE_YOUR_TESTNET_ORACLE_ADDRESS_HERE",  // From npm run deploy:testnet
+  30: "0x...",                                       // Optional: mainnet later
 }
 ```
 
@@ -89,9 +85,12 @@ http://localhost:8000
 ## Usage
 
 1. **Connect Wallet** — Click "Connect MetaMask / Rabby" and approve the connection
-2. **Select Network** — MetaMask will show which network you're on. Switch to:
-   - **Hardhat Local** (chainId 31337) for local testing
-   - **Rootstock Testnet** (chainId 31) for public testnet
+2. **Select Network** — Make sure MetaMask is set to **Rootstock Testnet** (chainId 31)
+   - If not already added, add it manually:
+     - **Name:** Rootstock Testnet
+     - **RPC URL:** https://public-node.testnet.rsk.co
+     - **Chain ID:** 31
+     - **Currency:** tRBTC
 3. **View Prediction** — The current prediction from the Oracle is displayed
 4. **Watch Events** — New predictions appear in real-time as they're submitted
 5. **Check Strategy** — The strategy recommendation is based on the yield tier:
@@ -128,9 +127,9 @@ Edit `config.js` to:
 **Problem:** Error says Oracle address is not configured.
 
 **Solution:**
-1. Run `npm run deploy:local` or `npm run deploy:testnet` to get addresses
+1. Run `npm run deploy:testnet` to deploy to Rootstock testnet
 2. Copy the Oracle address from `deployments.json`
-3. Paste it into `dapp-frontend/config.js` at the matching chain ID
+3. Paste it into `dapp-frontend/config.js` with chainId 31
 
 ### "MetaMask not detected"
 
@@ -146,8 +145,8 @@ Edit `config.js` to:
 **Problem:** dApp says your network is not supported.
 
 **Solution:**
-1. Switch your wallet to Rootstock Testnet (chainId 31) or local Hardhat (31337)
-2. Add the network to MetaMask manually:
+1. Switch your wallet to **Rootstock Testnet** (chainId 31)
+2. If the network isn't in MetaMask, add it manually:
    - **Name:** Rootstock Testnet
    - **RPC URL:** https://public-node.testnet.rsk.co
    - **Chain ID:** 31
@@ -203,9 +202,9 @@ netlify deploy --prod --dir dapp-frontend
 
 | Network | Chain ID | RPC | Status |
 |---------|----------|-----|--------|
-| Hardhat Local | 31337 | http://127.0.0.1:8545 | ✓ Local testing |
-| Rootstock Testnet | 31 | https://public-node.testnet.rsk.co | ✓ Public testnet |
+| **Rootstock Testnet** | **31** | **https://public-node.testnet.rsk.co** | **✓ Primary** |
 | Rootstock Mainnet | 30 | https://public-node.rsk.co | ✓ Mainnet (add address) |
+| Hardhat Local (optional) | 31337 | http://127.0.0.1:8545 | ✓ Local dev |
 
 ## Security
 

@@ -81,7 +81,7 @@ npm install -g circom2
 
 ---
 
-## Setup
+## Setup for Rootstock Testnet
 
 ### 1. Clone and install dependencies
 
@@ -91,19 +91,29 @@ cd rootstock-zk-ai-oracle
 npm install
 ```
 
-### 2. Configure environment
+### 2. Get Testnet RBTC
+
+Before deploying contracts, you'll need test Bitcoin (tRBTC) to pay for gas:
+
+```bash
+# Go to: https://faucet.rootstock.io
+# Request 0.1 - 1.0 tRBTC
+# Wait 1-2 minutes for funds to arrive
+```
+
+### 3. Configure for Testnet
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env`:
+Edit `.env` and set your testnet account:
 ```bash
-PRIVATE_KEY=0xYOUR_PRIVATE_KEY_HERE
+PRIVATE_KEY=0x...YOUR_FUNDED_ACCOUNT_PRIVATE_KEY...
 RSK_RPC_URL=https://public-node.testnet.rsk.co
 ```
 
-Get test RBTC (tRBTC): https://faucet.rootstock.io
+⚠️ **Never commit `.env` to git** — it contains your private key!
 
 ---
 
@@ -161,26 +171,25 @@ Oracle Contract
   ... (all tests pass)
 ```
 
-### Step 3: Deploy Contracts
+### Step 3: Deploy Contracts to Rootstock Testnet
 
-#### Local (no RBTC needed)
-
+First, ensure your `.env` is configured with testnet settings:
 ```bash
-# Terminal 1: start local node
-npx hardhat node
-
-# Terminal 2: deploy
-npm run deploy:local
+PRIVATE_KEY=0x...  # Your account's private key (from MetaMask/wallet)
+RSK_RPC_URL=https://public-node.testnet.rsk.co
 ```
 
-#### Rootstock Testnet
-
+Then deploy:
 ```bash
-# Ensure .env has PRIVATE_KEY with tRBTC balance
 npm run deploy:testnet
 ```
 
-Both commands write `deployments.json`:
+This will:
+1. Deploy `Verifier.sol` (with hardcoded Groth16 verification keys)
+2. Deploy `Oracle.sol` (links to Verifier)
+3. Write addresses to `deployments.json`
+
+Expected output:
 ```json
 {
   "network": "rskTestnet",
@@ -190,6 +199,11 @@ Both commands write `deployments.json`:
   "timestamp": "2024-01-15T10:30:00Z"
 }
 ```
+
+**Next Steps:**
+- View contract on explorer: `https://explorer.testnet.rootstock.io/address/{oracle_address}`
+- Update `dapp-frontend/config.js` with the Oracle address for your frontend
+- Continue to Step 4 to submit predictions
 
 ### Step 4: Run the Agent
 
@@ -546,13 +560,62 @@ rootstock-zk-ai-oracle/
 
 ---
 
+## Optional: Local Hardhat Development
+
+This system is configured for **Rootstock testnet by default**. However, you can also test locally on a Hardhat node (no testnet RBTC required).
+
+### Local Setup
+
+1. Update `.env`:
+```bash
+# Comment out testnet settings
+# PRIVATE_KEY=0x...
+# RSK_RPC_URL=https://public-node.testnet.rsk.co
+
+# Uncomment local hardhat settings (pre-funded test account)
+PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb476c6b8d6c1f02b86a1649a238f
+RSK_RPC_URL=http://127.0.0.1:8545
+```
+
+2. Start local Hardhat node:
+```bash
+npx hardhat node
+```
+
+3. In another terminal, deploy locally:
+```bash
+npm run deploy:local
+```
+
+4. Run the agent:
+```bash
+node agent/index.js
+```
+
+The agent will automatically detect the local network and use the pre-funded test account (10,000 test RBTC).
+
+### Local vs. Testnet
+
+| Aspect | Local (Hardhat) | Testnet |
+|--------|-----------------|---------|
+| Setup | Instant (`npx hardhat node`) | Need tRBTC from faucet |
+| Speed | Instant blocks | ~30s blocks |
+| Cost | Free (no gas cost) | ~$0.01 per submission |
+| Explorer | None (local only) | https://explorer.testnet.rootstock.io |
+| Persistence | Cleared on restart | Permanent |
+| Use case | Development & testing | Production & public validation |
+
+For production use, **always deploy to Rootstock testnet or mainnet**.
+
+---
+
 ## Troubleshooting
 
 **`Circuit WASM not found`**
 Run `npm run compile:circuit` first.
 
 **`deployments.json not found`**
-Run `npm run deploy:local` (with `npx hardhat node` running) or `npm run deploy:testnet`.
+Run `npm run deploy:testnet` (primary). Or for local development: `npm run deploy:local` (requires `npx hardhat node` running in another terminal).
 
 **`Gas estimation failed — InvalidProof`**
 Using the stub `Verifier.sol` which always returns false. Run `npm run compile:circuit` to generate the real verifier, then `npm run compile:contracts` and redeploy.
