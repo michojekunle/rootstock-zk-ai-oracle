@@ -118,6 +118,7 @@ RSK_RPC_URL=https://public-node.testnet.rsk.co
 ```
 
 ⚠️ **Never commit `.env` to git** — it contains your private key!
+<<<<<<< HEAD
 
 ---
 
@@ -133,6 +134,8 @@ This project is a **real, verifiable end-to-end implementation**:
 - ❌ No full dApp UI — focus is on the core proof pipeline, not UI
 - ❌ No price oracle — we assume external data (CoinGecko); no Chainlink/Uniswap integration yet
 - ❌ No DAO governance — no tokenomics or voting (easily added later)
+=======
+>>>>>>> 91c31b48c14244a3e323da7ed1ae67ad15f45798
 
 ---
 
@@ -446,6 +449,7 @@ The oracle is pre-configured to support real Llama AI inference. The system auto
 
 ```bash
 npm install node-llama-cpp
+<<<<<<< HEAD
 ```
 
 #### 2. Download a quantized Llama model
@@ -570,7 +574,69 @@ console.log(strategy);  // Should be "aggressive", "balanced", "conservative", o
 // Verify can query by ID
 const pred1 = await contract.getPrediction(1);
 console.log(pred1.predictedYield.toString());
+=======
 ```
+
+#### 2. Download a quantized Llama model
+
+Choose a model size based on your hardware:
+
+```bash
+# Small (3B parameters, ~2 GB, 2-3s inference on CPU)
+npx node-llama-cpp pull --dir ./models llama3.2:3b
+
+# Medium (8B parameters, ~5 GB, 5-10s inference on CPU)
+npx node-llama-cpp pull --dir ./models llama3.2:8b
+```
+
+#### 3. Set model path in `.env`
+
+```bash
+# Edit .env:
+LLAMA_MODEL_PATH=./models/llama-3.2-3b-instruct.Q4_K_M.gguf
+>>>>>>> 91c31b48c14244a3e323da7ed1ae67ad15f45798
+```
+
+#### 4. Run with real Llama
+
+```bash
+# The agent will automatically load the model on startup
+node agent/index.js
+```
+
+**Expected output:**
+```
+[Llama] Loading model from: ./models/llama-3.2-3b-instruct.Q4_K_M.gguf
+[Llama] Model loaded successfully
+[Step 1/3] AI Yield Prediction (Llama)
+[Llama] Generating prediction...
+[Llama] Prediction: 750 bps (7.50%)
+```
+
+### How It Works
+
+The `llama-predictor.js` module:
+- Loads the GGUF model file on startup (if `LLAMA_MODEL_PATH` is set)
+- Sends BTC market data to Llama via a structured prompt
+- Parses the model's integer response (basis points)
+- Falls back to mock predictor if model loading fails
+
+The system **automatically tries Llama first, then falls back to mock** — no code changes needed.
+
+### Performance Notes
+
+- **3B model:** ~2-3 seconds per prediction on CPU
+- **8B model:** ~5-10 seconds per prediction on CPU
+- **GPU inference:** Use `CUDA_VISIBLE_DEVICES` or hardware-specific bindings (see node-llama-cpp docs)
+- Models are cached in memory after first load
+
+### Model Quality
+
+- `3B`: Fast, suitable for testnet / demo
+- `8B`: More accurate, production recommended
+- `13B+`: Highest quality but slower
+
+See [node-llama-cpp docs](https://github.com/withcatai/node-llama-cpp) for advanced usage.
 
 ---
 
