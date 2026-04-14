@@ -23,3 +23,7 @@ build/
 
 # macOS
 .DS_Store
+
+models/
+
+.claude

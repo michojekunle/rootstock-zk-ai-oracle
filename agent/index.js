@@ -1,22 +1,25 @@
 // agent/index.js
 // ─────────────────────────────────────────────────────────────────────────────
 // ZK-Private AI Oracle Agent
-// Combines: MCP Server + Mock Llama Predictor + Circom ZK Proof + Oracle Submission
+// Combines: MCP Server + TinyLlama Predictor + Circom ZK Proof + Oracle Submission
 //
 // This agent can be used in two ways:
 //   1. As an MCP server (connected to Claude or another MCP host via stdio)
 //   2. As a standalone CLI script (direct pipeline execution)
 //
 // MCP Tools exposed:
-//   predict_btc_yield    — Run mock Llama prediction on BTC market data
+//   predict_btc_yield    — Run TinyLlama prediction on live CoinGecko BTC data
 //   generate_zk_proof    — Generate a Groth16 ZK proof for a prediction
 //   submit_to_oracle     — Submit proof to Oracle.sol on Rootstock
 //   run_full_pipeline    — Run all three steps automatically
 //
 // Standalone CLI:
-//   node agent/index.js                      (runs full pipeline with defaults)
-//   node agent/index.js --threshold 600      (custom threshold)
-//   node agent/index.js --mcp               (start as MCP server)
+//   node agent/index.js                           (local hardhat node, threshold 500)
+//   node agent/index.js --network local           (explicit local — same as default)
+//   node agent/index.js --network testnet         (Rootstock testnet via RSK_RPC_URL or public node)
+//   node agent/index.js --threshold 600           (custom threshold, local node)
+//   node agent/index.js --network testnet --threshold 600
+//   node agent/index.js --mcp                     (start as MCP server)
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -27,6 +30,7 @@ import { readFileSync, existsSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { generateProof } from "../scripts/generateProof.js";
+import { LlamaModel, LlamaContext, LlamaChatSession, ChatMLChatPromptWrapper } from "node-llama-cpp";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -39,103 +43,186 @@ try {
 } catch (_) { /* dotenv not installed or .env missing — env vars still read from process.env */ }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SECTION 1: Mock Llama BTC Yield Predictor
-//
-// In production, replace mockLlamaPredict() with real LLM inference.
-// Integration guide (node-llama-cpp):
-//
-//   import { getLlama, LlamaChatSession } from "node-llama-cpp";
-//
-//   const llama = await getLlama();
-//   const model = await llama.loadModel({
-//     modelPath: process.env.LLAMA_MODEL_PATH || "./models/llama-3.2-3b.gguf"
-//   });
-//   const context = await model.createContext();
-//   const session = new LlamaChatSession({
-//     contextSequence: context.getSequence()
-//   });
-//
-//   const prompt = `
-//     You are a BTC yield prediction model. Given the following 24-hour BTC market data,
-//     predict the expected DeFi lending yield in basis points (0-10000, where 100 = 1%).
-//     Return ONLY a single integer. No explanation.
-//
-//     Market data: ${JSON.stringify(btcHistory)}
-//   `;
-//   const response = await session.prompt(prompt);
-//   return Math.max(0, Math.min(10000, parseInt(response.trim())));
-//
-// Download model: npx node-llama-cpp pull --dir ./models llama3.2:3b
+// SECTION 1: TinyLlama BTC Yield Predictor + Real Market Data
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// Synthetic BTC market history (7 data points = last 7 periods)
-// In production: fetch from CoinGecko, Binance, or RSK DeFi protocols
-const MOCK_BTC_HISTORY = [
-  { price: 42000, volume: 18000, volatility: 0.025, dominance: 52.1 },
-  { price: 44500, volume: 21000, volatility: 0.018, dominance: 52.8 },
-  { price: 43200, volume: 16000, volatility: 0.031, dominance: 51.9 },
-  { price: 46000, volume: 25000, volatility: 0.012, dominance: 53.2 },
-  { price: 45500, volume: 22000, volatility: 0.015, dominance: 53.0 },
-  { price: 47200, volume: 28000, volatility: 0.009, dominance: 54.1 },
-  { price: 48900, volume: 31000, volatility: 0.008, dominance: 55.0 },
-];
+/**
+ * Fetch a single URL with a timeout. Retries once on transient failure.
+ *
+ * @param {string} url
+ * @param {number} timeoutMs
+ * @returns {Promise<Response>}
+ */
+async function fetchWithRetry(url, timeoutMs = 10000) {
+  const attempt = async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { signal: controller.signal });
+      return res;
+    } catch (err) {
+      const reason = err.cause ? ` (${err.cause.message ?? err.cause})` : "";
+      throw new Error(`Request to ${url} failed: ${err.message}${reason}`);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  try {
+    return await attempt();
+  } catch (firstErr) {
+    console.log(`  [Data] Retrying after: ${firstErr.message}`);
+    return attempt();
+  }
+}
 
 /**
- * Mock Llama yield predictor.
- * Simulates LLM reasoning about BTC market conditions to predict DeFi yield.
+ * Fetch last 7 daily periods of BTC market data from CoinGecko (no API key required).
+ * Returns price, volume, daily volatility, and BTC dominance for each period.
  *
- * Factors considered (mirroring how a real LLM would reason):
- *   - Price momentum: rising BTC → improved lending conditions
- *   - Volume surge: high volume → higher confidence, better market depth
- *   - Volatility: high volatility → risk-off, lower yields
- *   - BTC dominance: higher dominance → stronger BTC narrative → better yield
- *
- * @param {Object[]} btcHistory - Array of BTC market data points
- * @returns {number} Predicted yield in basis points (0-10000)
+ * @returns {Promise<Array<{price: number, volume: number, volatility: number, dominance: number}>>}
  */
-function mockLlamaPredict(btcHistory) {
-  const latest = btcHistory[btcHistory.length - 1];
-  const prev   = btcHistory[btcHistory.length - 2];
+async function fetchBtcHistory() {
+  console.log("  [Data] Fetching live BTC market data from CoinGecko...");
 
-  // Price momentum factor (positive = bullish trend)
-  const priceMomentum = (latest.price - prev.price) / prev.price;
+  // Fetch 8 days so we can compute 7 volatility values from consecutive pairs
+  const [chartRes, globalRes] = await Promise.all([
+    fetchWithRetry(
+      "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart" +
+      "?vs_currency=usd&days=8&interval=daily"
+    ),
+    fetchWithRetry("https://api.coingecko.com/api/v3/global"),
+  ]);
 
-  // Volume factor (1.0 = average, >1.0 = elevated activity)
-  const avgVolume = btcHistory.reduce((s, d) => s + d.volume, 0) / btcHistory.length;
-  const volumeFactor = latest.volume / avgVolume;
+  if (!chartRes.ok) {
+    throw new Error(
+      `CoinGecko chart API error: HTTP ${chartRes.status} ${chartRes.statusText}\n` +
+      "If this persists, check https://status.coingecko.com or set a COINGECKO_API_KEY in .env"
+    );
+  }
+  if (!globalRes.ok) {
+    throw new Error(
+      `CoinGecko global API error: HTTP ${globalRes.status} ${globalRes.statusText}`
+    );
+  }
 
-  // Volatility penalty (high volatility reduces yield confidence)
-  const volatilityPenalty = latest.volatility * 1500;
+  const chart = await chartRes.json();
+  const { data: globalData } = await globalRes.json();
 
-  // Dominance bonus (higher BTC dominance = market favors BTC DeFi)
-  const dominanceBonus = (latest.dominance - 50) * 25;
+  const btcDominance = globalData.market_cap_percentage.btc;
+  const { prices, total_volumes } = chart;
 
-  // Base yield: 400 bps (4%) — typical RSK lending baseline
-  const baseYield = 400;
+  const len = Math.min(prices.length, total_volumes.length);
+  if (len < 2) {
+    throw new Error(`Insufficient CoinGecko data: only ${len} data points returned`);
+  }
 
-  // Composite score
-  const rawScore =
-    baseYield
-    + priceMomentum * 6000    // momentum has strong impact
-    + (volumeFactor - 1) * 150 // volume boost
-    - volatilityPenalty        // volatility is a drag
-    + dominanceBonus;          // dominance bonus
+  const history = [];
+  for (let i = 1; i < len; i++) {
+    const price      = prices[i][1];
+    const prevPrice  = prices[i - 1][1];
+    const volume     = total_volumes[i][1];
+    const volatility = Math.abs(price - prevPrice) / prevPrice;
+    history.push({ price, volume, volatility, dominance: btcDominance });
+  }
 
-  // Clamp to valid circuit range [0, 10000]
-  const prediction = Math.max(0, Math.min(10000, Math.round(rawScore)));
+  const result = history.slice(-7);
+  console.log(`  [Data] Fetched ${result.length} periods. Latest BTC price: $${Math.round(result[result.length - 1].price).toLocaleString()}`);
+  return result;
+}
 
-  console.log("  [Llama] BTC price momentum: " + (priceMomentum * 100).toFixed(2) + "%");
-  console.log("  [Llama] Volume factor:       " + volumeFactor.toFixed(2) + "x");
-  console.log("  [Llama] Volatility penalty:  " + volatilityPenalty.toFixed(1) + " bps");
-  console.log("  [Llama] Dominance bonus:     " + dominanceBonus.toFixed(1) + " bps");
-  console.log(`  [Llama] Predicted yield:     ${prediction} bps (${(prediction / 100).toFixed(2)}%)`);
+// Singleton LlamaChatSession — loaded once on first call to llamaPredict()
+let _session = null;
 
-  return prediction;
+/**
+ * Initialise (or return cached) LlamaChatSession using TinyLlama.
+ * Model path: LLAMA_MODEL_PATH env var or ./models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
+ *
+ * @returns {Promise<LlamaChatSession>}
+ */
+async function loadSession() {
+  if (_session !== null) return _session;
+
+  const modelPath = process.env.LLAMA_MODEL_PATH
+    ?? path.join(ROOT, "models", "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf");
+
+  if (!existsSync(modelPath)) {
+    throw new Error(
+      `LLM model not found: ${modelPath}\n` +
+      "Set LLAMA_MODEL_PATH to the .gguf file path or place the model in ./models/"
+    );
+  }
+
+  console.log(`  [Llama] Loading model: ${modelPath}`);
+  const model   = new LlamaModel({ modelPath });
+  const context = new LlamaContext({ model });
+  _session = new LlamaChatSession({
+    context,
+    promptWrapper: new ChatMLChatPromptWrapper(),
+    systemPrompt:
+      "You are a DeFi yield prediction model. " +
+      "Output only a single integer from 0 to 10000 (basis points, where 100 = 1% APY). " +
+      "No text, no units, no explanation — just the integer.",
+  });
+
+  return _session;
+}
+
+/**
+ * Run TinyLlama inference on real BTC market data to predict DeFi lending yield.
+ *
+ * @param {Array<{price: number, volume: number, volatility: number, dominance: number}>} btcHistory
+ * @returns {Promise<number>} Predicted yield in basis points [0, 10000]
+ */
+async function llamaPredict(btcHistory) {
+  const session = await loadSession();
+
+  const compactData = btcHistory.map(d => ({
+    price:      Math.round(d.price),
+    volume:     Math.round(d.volume),
+    volatility: +d.volatility.toFixed(4),
+    dominance:  +d.dominance.toFixed(1),
+  }));
+
+  const prompt =
+    "Predict the expected BTC DeFi lending yield in basis points " +
+    "given this 7-period market data:\n" +
+    JSON.stringify(compactData);
+
+  console.log("  [Llama] Running inference on live market data...");
+  const response = await session.prompt(prompt, { temperature: 0.1, maxTokens: 16 });
+  const trimmed  = response.trim();
+
+  const match = trimmed.match(/\b(\d{1,5})\b/);
+  const value = match ? parseInt(match[1], 10) : NaN;
+
+  if (isNaN(value) || value < 0 || value > 10000) {
+    throw new Error(`LLM returned unparseable yield: "${trimmed}"`);
+  }
+
+  console.log(`  [Llama] Raw response:    "${trimmed}"`);
+  console.log(`  [Llama] Predicted yield: ${value} bps (${(value / 100).toFixed(2)}%)`);
+
+  return value;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 2: Oracle Contract Interaction (ethers.js)
 // ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Resolve the RPC URL for the target network.
+ * Defaults to local hardhat node if network is unspecified or "local".
+ *
+ * @param {"local"|"testnet"|undefined} network
+ * @returns {string} RPC URL
+ */
+function resolveRpcUrl(network) {
+  if (network === "testnet") {
+    return process.env.RSK_RPC_URL || "https://public-node.testnet.rsk.co";
+  }
+  return "http://127.0.0.1:8545";
+}
 
 function loadDeployment() {
   const deployPath = path.join(ROOT, "deployments.json");
@@ -166,13 +253,13 @@ function loadOracleABI() {
  * Submit a ZK proof to the deployed Oracle contract.
  *
  * @param {{ pA, pB, pC, pubSignals }} solidityCalldata Formatted proof from generateProof
+ * @param {string} rpcUrl RPC endpoint resolved by resolveRpcUrl()
  * @returns {Promise<import("ethers").TransactionReceipt>}
  */
-async function submitToOracle(solidityCalldata) {
+async function submitToOracle(solidityCalldata, rpcUrl) {
   const deployment = loadDeployment();
   const abi = loadOracleABI();
 
-  const rpcUrl = process.env.RSK_RPC_URL || "http://127.0.0.1:8545";
   const privateKey = process.env.PRIVATE_KEY;
 
   const provider = new ethers.JsonRpcProvider(rpcUrl);
@@ -292,7 +379,7 @@ const server = new McpServer({
 // ── Tool 1: predict_btc_yield ─────────────────────────────────────────────────
 server.tool(
   "predict_btc_yield",
-  "Use the mock Llama model to predict BTC DeFi yield from historical market data. " +
+  "Use TinyLlama to predict BTC DeFi yield from live CoinGecko market data. " +
   "Returns a yield in basis points (0-10000) that will be kept private in the ZK proof.",
   {
     threshold: z.number().int().min(0).max(10000).default(500)
@@ -300,9 +387,9 @@ server.tool(
   },
   async ({ threshold }) => {
     console.log("\n[Tool: predict_btc_yield]");
-    console.log("  Running mock Llama prediction on BTC history...");
+    console.log("  Fetching live BTC market data and running TinyLlama inference...");
 
-    const prediction = mockLlamaPredict(MOCK_BTC_HISTORY);
+    const prediction = await llamaPredict(await fetchBtcHistory());
 
     return {
       content: [{
@@ -381,12 +468,14 @@ server.tool(
       .describe("Proof element C: [x, y] as hex strings"),
     pubSignals: z.array(z.string()).length(3)
       .describe("Public signals: [predicted_yield, is_above_threshold, threshold]"),
+    network: z.enum(["local", "testnet"]).default("local")
+      .describe("Target network: 'local' (hardhat, default) or 'testnet' (Rootstock testnet)"),
   },
-  async ({ pA, pB, pC, pubSignals }) => {
+  async ({ pA, pB, pC, pubSignals, network }) => {
     console.log("\n[Tool: submit_to_oracle]");
 
     try {
-      const receipt = await submitToOracle({ pA, pB, pC, pubSignals });
+      const receipt = await submitToOracle({ pA, pB, pC, pubSignals }, resolveRpcUrl(network));
 
       return {
         content: [{
@@ -419,9 +508,11 @@ server.tool(
   {
     threshold: z.number().int().min(0).max(10000).default(500)
       .describe("Yield threshold in basis points"),
+    network: z.enum(["local", "testnet"]).default("local")
+      .describe("Target network: 'local' (hardhat, default) or 'testnet' (Rootstock testnet)"),
   },
-  async ({ threshold }) => {
-    return runFullPipeline(threshold);
+  async ({ threshold, network }) => {
+    return runFullPipeline(threshold, resolveRpcUrl(network));
   }
 );
 
@@ -429,17 +520,18 @@ server.tool(
 // SECTION 4: Full Pipeline (shared by MCP tool and CLI mode)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function runFullPipeline(threshold = 500) {
+async function runFullPipeline(threshold = 500, rpcUrl = "http://127.0.0.1:8545") {
   console.log("");
   console.log("╔══════════════════════════════════════════════════╗");
   console.log("║  ZK-Private AI Oracle — Full Pipeline            ║");
   console.log("╚══════════════════════════════════════════════════╝");
+  console.log(`  Network: ${rpcUrl}`);
 
   try {
-    // ── Step 1: Mock Llama Prediction ────────────────────────────────────────
-    console.log("\n[Step 1/3] AI Yield Prediction (Mock Llama)");
+    // ── Step 1: TinyLlama Prediction on Live Data ────────────────────────────
+    console.log("\n[Step 1/3] AI Yield Prediction (TinyLlama + Live CoinGecko Data)");
     console.log("─".repeat(50));
-    const rawPrediction = mockLlamaPredict(MOCK_BTC_HISTORY);
+    const rawPrediction = await llamaPredict(await fetchBtcHistory());
     const salt = Math.floor(Math.random() * 1e14);
     console.log(`  Raw prediction:  ${rawPrediction} bps (PRIVATE — never revealed on-chain)`);
     console.log(`  Salt:            ${salt} (random nonce for privacy binding)`);
@@ -456,7 +548,7 @@ async function runFullPipeline(threshold = 500) {
     // ── Step 3: On-chain Submission ───────────────────────────────────────────
     console.log("\n[Step 3/3] On-chain Submission (Rootstock)");
     console.log("─".repeat(50));
-    const receipt = await submitToOracle(solidityCalldata);
+    const receipt = await submitToOracle(solidityCalldata, rpcUrl);
 
     // ── Summary ───────────────────────────────────────────────────────────────
     console.log("");
@@ -507,7 +599,8 @@ async function runFullPipeline(threshold = 500) {
       ],
     };
 
-    console.error("\nPipeline failed:", err.message);
+    const detail = err.cause ? `\n  Caused by: ${err.cause}` : "";
+    console.error(`\nPipeline failed: ${err.message}${detail}`);
     return {
       content: [{ type: "text", text: JSON.stringify(errorResult, null, 2) }],
       isError: true,
@@ -542,10 +635,21 @@ if (isMCPMode) {
   // ── CLI / Standalone Mode ──────────────────────────────────────────────────
   // Run the full pipeline directly without an MCP host.
   const args = process.argv.slice(2);
-  const thresholdIdx = args.indexOf("--threshold");
-  const threshold = thresholdIdx !== -1 ? parseInt(args[thresholdIdx + 1]) : 500;
 
-  runFullPipeline(threshold).then((result) => {
+  const thresholdIdx = args.indexOf("--threshold");
+  const threshold = thresholdIdx !== -1 ? parseInt(args[thresholdIdx + 1], 10) : 500;
+
+  const networkIdx = args.indexOf("--network");
+  const network = networkIdx !== -1 ? args[networkIdx + 1] : "local";
+
+  if (network !== "local" && network !== "testnet") {
+    console.error(`Unknown network "${network}". Use --network local or --network testnet`);
+    process.exit(1);
+  }
+
+  const rpcUrl = resolveRpcUrl(network);
+
+  runFullPipeline(threshold, rpcUrl).then((result) => {
     if (result.isError) {
       process.exit(1);
     }
